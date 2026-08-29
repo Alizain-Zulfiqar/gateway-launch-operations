@@ -40,35 +40,7 @@ The first command removes Apple’s download quarantine. `./run_mac.sh` creates 
 
 **Alternative:** System Settings → **Privacy & Security** → scroll to the blocked app → **Open Anyway**.
 
-### Copernicus / ERA5 credentials
 
-This repository includes **shared API credentials** under `packaging/.cdsapirc` so teammates do not need their own Copernicus CDS account for ERA5 weather downloads. The launchers wire those credentials automatically.
-
-> **Security:** Anyone with access to this repo can use those credentials. Keep the repository **private** on GitHub unless you intend to rotate the key after sharing.
-
-Optional `.env` overrides can be placed in `packaging/.env` (loaded automatically if present).
-
-### First-time database
-
-On first run, if `gateway.db` is missing, the app copies `packaging/gateway.db.seed` (sample sites, vehicles, and ports). Your own saves stay in `gateway.db` locally and are not committed.
-
----
-
-## Developers
-
-```bash
-# Refresh bundled credentials / seed DB before committing updates
-python scripts/prepare_packaging_assets.py
-
-# Run tests (after venv exists)
-./run_mac.sh test          # macOS / Linux
-runapp.bat test            # Windows
-
-# Standalone Windows build (no Python required for end users)
-build_windows.bat          # → dist/GatewayLaunch/
-```
-
-See **`CLAUDE.md`** for architecture, modules, and operational notes.
 
 ## Requirements
 
