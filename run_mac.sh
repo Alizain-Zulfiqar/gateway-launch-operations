@@ -7,6 +7,13 @@ cd "$ROOT"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-$ROOT/.matplotlib_cache}"
 mkdir -p "$MPLCONFIGDIR"
 
+# Files cloned or downloaded from GitHub carry a macOS quarantine flag.
+# Clearing it lets Run Gateway.command double-click work after the first
+# Terminal launch (or run: xattr -dr com.apple.quarantine . manually).
+if command -v xattr >/dev/null 2>&1; then
+  xattr -dr com.apple.quarantine "$ROOT" 2>/dev/null || true
+fi
+
 pick_python() {
   for cmd in python3.14 python3.13 python3.12 python3.11 python3; do
     if command -v "$cmd" >/dev/null 2>&1; then

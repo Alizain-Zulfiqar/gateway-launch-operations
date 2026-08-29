@@ -28,6 +28,7 @@ dist/
 Thumbs.db
 .idea/
 .vscode/
+.tools/
 
 # Optional local overrides at repo root (bundled copies live in packaging/)
 /.env
