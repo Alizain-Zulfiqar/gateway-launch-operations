@@ -1,0 +1,42 @@
+# Gateway Launch Operations — Site Analysis & Mission Planning Application
+# Python 3.11+
+
+# UI
+PyQt6>=6.6.0
+pyqtgraph>=0.13.3
+matplotlib>=3.8.0
+
+# Data fetching
+requests>=2.31.0
+erddapy>=2.1.0
+
+# Scientific / data
+numpy>=1.26.0
+scipy>=1.11.0
+pandas>=2.1.0
+xarray>=2023.10.0
+netCDF4>=1.6.5
+
+# ERA5 / Copernicus CDS
+# ecmwf-datastores-client listed explicitly (Set 42) — it's already a
+# transitive dependency of cdsapi, but era5.py now imports it directly
+# (ecmwf.datastores.legacy_client.LegacyClient) since plain cdsapi.Client's
+# retrieve() uses a retired URL scheme against the current CDS backend.
+cdsapi>=0.7.7
+ecmwf-datastores-client>=0.5.1
+
+# Geospatial
+geopy>=2.4.1
+
+# PDF export
+fpdf2>=2.7.6
+
+# Configuration
+python-dotenv>=1.0.0
+
+# XML parsing (NDBC active stations)
+lxml>=4.9.3
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0

@@ -1,0 +1,2 @@
+# Local-only build scratch — bundled share files (.cdsapirc, .env, gateway.db.seed) are committed.
+gateway.db

@@ -1,0 +1,40 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local runtime data (seed DB is in packaging/gateway.db.seed)
+gateway.db
+gateway.db-journal
+gateway.db-wal
+gateway.db-shm
+
+# User-generated output
+reports/
+backups/
+.matplotlib_cache/
+
+# PyInstaller
+build/
+dist/
+*.spec.bak
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Optional local overrides at repo root (bundled copies live in packaging/)
+/.env
+/.cdsapirc
+
+# Large / personal uploads (not needed to run the app)
+assets/project_documents/
+
+# Stray planning doc
+Gateway App MD.md
