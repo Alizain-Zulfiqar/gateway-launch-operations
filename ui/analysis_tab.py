@@ -631,8 +631,14 @@ class AnalysisTab(QWidget):
                 from modules.m2_weather.era5_ensure import ensure_era5_cache_blocking
                 from modules.m2_weather.operability import build_era5_operability_heatmaps
 
+                from modules.m2_weather.era5_cache import era5_cache_progress
+                from modules.m2_weather.era5_ensure import cache_good_enough
+
                 span = year_end - year_start + 1
-                if span > 20:
+                _c, _t = era5_cache_progress(
+                    self.mw.site.lat, self.mw.site.lon, year_start, year_end,
+                )
+                if span > 20 and not cache_good_enough(_c, _t) and _c < _t:
                     QMessageBox.information(
                         self,
                         "Large Year Range",
@@ -667,14 +673,11 @@ class AnalysisTab(QWidget):
                         err or "Copernicus ERA5 data could not be retrieved.",
                     )
                     return
-                # Partial coverage (e.g. current-year months not yet published
-                # by Copernicus) — warn and continue with available months.
+                # Partial coverage (e.g. newest months not yet cached or not
+                # yet published) — note it and continue with available
+                # months. Non-modal: a popup on every run was noise.
                 if err:
-                    QMessageBox.information(
-                        self,
-                        "Partial ERA5 Data",
-                        err,
-                    )
+                    self.mw.status(err.splitlines()[0])
 
                 self._set_fetch_status(
                     "Analyzing 12-month profile (charts 1–10)…",

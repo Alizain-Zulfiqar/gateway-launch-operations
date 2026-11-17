@@ -3,6 +3,7 @@ modules/m2_weather/era5_ensure.py — Blocking ERA5 monthly cache ensure for Mai
 """
 from __future__ import annotations
 
+import threading
 from typing import Callable, Optional
 
 from PyQt6.QtCore import QEventLoop, QThread, pyqtSignal
@@ -28,6 +29,55 @@ _ERA5_PARSE_FAILED = (
     "ERA5 data downloaded from Copernicus but could not be parsed into monthly "
     f"wind/wave fields. {_ERA5_AUTH_HINT}"
 )
+
+
+# A cache is "good enough" to analyse from immediately when only a small
+# gap remains — usually the newest months Copernicus published since the
+# last download. Larger gaps (new site, wider year range) still block.
+_MAX_MISSING_MONTHS_NONBLOCKING = 12
+_MIN_COVERAGE_NONBLOCKING = 0.90
+
+_topups_running: set[tuple] = set()
+_topups_lock = threading.Lock()
+
+
+def cache_good_enough(cached: int, total: int) -> bool:
+    if total <= 0 or cached <= 0:
+        return False
+    missing = total - cached
+    return (
+        missing <= _MAX_MISSING_MONTHS_NONBLOCKING
+        and cached / total >= _MIN_COVERAGE_NONBLOCKING
+    )
+
+
+def start_background_topup(
+    lat: float, lon: float, year_start: int, year_end: int,
+) -> bool:
+    """Fetch missing months on a daemon thread (one per site/range at a time).
+
+    Returns False when an identical top-up is already running, so repeated
+    analysis runs don't pile duplicate jobs into the Copernicus queue.
+    """
+    key = (round(lat, 2), round(lon, 2), year_start, year_end)
+    with _topups_lock:
+        if key in _topups_running:
+            return False
+        _topups_running.add(key)
+
+    def _work() -> None:
+        try:
+            ensure_era5_cache(
+                lat, lon, year_start, year_end, prefer_cache=False,
+            )
+        except Exception:
+            pass
+        finally:
+            with _topups_lock:
+                _topups_running.discard(key)
+
+    threading.Thread(target=_work, name="era5-topup", daemon=True).start()
+    return True
 
 
 def _years_needing_fetch(lat: float, lon: float, year_start: int, year_end: int) -> list[int]:
@@ -57,9 +107,14 @@ def ensure_era5_cache(
     *,
     on_progress: ProgressCallback | None = None,
     allow_partial: bool = True,
+    prefer_cache: bool = True,
 ) -> tuple[bool, str | None]:
     """
     Ensure era5_monthly_cache covers months ERA5 is expected to provide.
+
+    With *prefer_cache* (default) and a nearly complete cache (see
+    cache_good_enough), returns immediately and fetches the gap in a
+    background thread instead of blocking the analysis.
 
     Fetches one Copernicus job per incomplete calendar year (avoids huge
     multi-decade requests that blow up NetCDF merge and CDS queues).
@@ -86,6 +141,21 @@ def ensure_era5_cache(
 
     if cached >= total:
         return True, None
+
+    if prefer_cache and cache_good_enough(cached, total):
+        # Nearly complete (typically just the newest few months missing):
+        # analyse now from cache; top up in the background. Blocking here
+        # meant waiting on a Copernicus queue that can sit for hours.
+        started = start_background_topup(lat, lon, year_start, year_end)
+        msg = (
+            f"Using {cached} of {total} cached ERA5 months; the "
+            f"{total - cached} missing month(s) "
+            + ("are downloading in the background." if started
+               else "are already downloading in the background.")
+        )
+        if on_progress:
+            on_progress(cached, total, msg)
+        return True, msg
 
     years = _years_needing_fetch(lat, lon, year_start, year_end)
     last_error: str | None = None

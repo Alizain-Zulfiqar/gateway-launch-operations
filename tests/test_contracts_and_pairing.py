@@ -40,6 +40,28 @@ def db_file(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_live_weather(monkeypatch):
+    """These tests cover contract wiring, not weather. Without this stub,
+    AnalysisTab._run() (Historical mode) starts a real multi-decade
+    Copernicus ERA5 download — the reason full-suite runs hung for hours."""
+    import modules.m2_weather.era5_ensure as ensure_mod
+    import modules.m2_weather.data_manager as dm
+    from ui.analysis_tab import AnalysisTab
+
+    monkeypatch.setattr(
+        ensure_mod, "ensure_era5_cache_blocking", lambda *a, **k: (True, None),
+    )
+
+    def _offline(*_a, **_k):
+        raise ConnectionError("live weather disabled in tests")
+
+    monkeypatch.setattr(dm, "get_site_weather_summary", _offline)
+    monkeypatch.setattr(
+        AnalysisTab, "_start_background_fetches", lambda *a, **k: None,
+    )
+
+
+@pytest.fixture(autouse=True)
 def _patch_db(db_file, monkeypatch):
     monkeypatch.setattr(db_mod, "DB_PATH", str(db_file))
     db_mod.init_db()

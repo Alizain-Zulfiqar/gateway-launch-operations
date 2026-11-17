@@ -131,3 +131,73 @@ class TestEnsureEra5Cache:
         )
         assert ok is False
         assert err is not None
+
+
+class TestNonBlockingWhenNearlyCached:
+    """A site with nearly all months cached must not block the analysis on
+    the Copernicus queue (client run sat >2 h waiting on 3 missing months)."""
+
+    def test_cache_good_enough_thresholds(self):
+        from modules.m2_weather.era5_ensure import cache_good_enough
+
+        assert cache_good_enough(798, 801)          # 3 recent months missing
+        assert cache_good_enough(110, 120)          # 10 missing, 92%
+        assert not cache_good_enough(6, 12)         # half missing
+        assert not cache_good_enough(700, 801)      # 101 missing
+        assert not cache_good_enough(0, 12)         # brand-new site
+        assert not cache_good_enough(5, 0)
+
+    def test_returns_immediately_and_tops_up_in_background(
+        self, isolated_db, monkeypatch,
+    ):
+        import threading
+        from modules.m2_weather import era5_ensure as mod
+
+        for yr in (2023, 2024):
+            for mo in range(1, 13):
+                if (yr, mo) in ((2024, 11), (2024, 12)):
+                    continue
+                save_cached_era5_month(
+                    28.5, -80.5, f"{yr}-{mo:02d}-01", _full_month(),
+                )
+
+        release = threading.Event()
+        fetch_started = threading.Event()
+
+        def _slow_fetch(*_a, **_k):
+            fetch_started.set()
+            release.wait(5)          # simulates a long Copernicus queue
+            return {}
+
+        monkeypatch.setattr(mod, "fetch_marine_climatology", _slow_fetch)
+        try:
+            ok, msg = mod.ensure_era5_cache(28.5, -80.5, 2023, 2024)
+            assert ok is True
+            assert "background" in msg
+            assert fetch_started.wait(2), "background top-up never started"
+
+            # A second run while the top-up is in flight must not queue
+            # another Copernicus job.
+            ok2, msg2 = mod.ensure_era5_cache(28.5, -80.5, 2023, 2024)
+            assert ok2 is True and "already downloading" in msg2
+        finally:
+            release.set()
+            # Let the top-up thread finish while the test DB is still active.
+            for t in threading.enumerate():
+                if t.name == "era5-topup":
+                    t.join(5)
+            assert not mod._topups_running
+
+    def test_large_gap_still_blocks_and_fetches(self, isolated_db, monkeypatch):
+        from modules.m2_weather import era5_ensure as mod
+
+        save_cached_era5_month(28.5, -80.5, "2024-01-01", _full_month())
+        calls = []
+
+        def _fetch(*_a, **_k):
+            calls.append(1)
+            return {}
+
+        monkeypatch.setattr(mod, "fetch_marine_climatology", _fetch)
+        mod.ensure_era5_cache(28.5, -80.5, 2024, 2024)
+        assert calls, "a mostly-empty cache must still fetch synchronously"

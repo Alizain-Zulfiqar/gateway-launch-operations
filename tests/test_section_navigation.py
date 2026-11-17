@@ -9,7 +9,8 @@ def test_all_sections_have_stack_index():
     expected_keys = {
         "projects", "quick_analysis",
         "sites", "analysis", "vehicles", "launchers", "comparison",
-        "ndbc", "forecast", "ports", "vessels", "contracts",
+        "mission_timing", "ndbc", "forecast", "ports", "mission_economics",
+        "vessels", "contracts",
         "reports", "history", "settings",
     }
     assert set(_SECTION_INDEX.keys()) == expected_keys
