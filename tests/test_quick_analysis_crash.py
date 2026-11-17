@@ -91,3 +91,24 @@ class TestCdsClientLimits:
         era5._get_cds_client()
         assert captured["retry_max"] <= 10
         assert captured["sleep_max"] <= 30
+
+
+def test_operability_progress_update_does_not_crash():
+    """A broken duplicate _draw_fetch_progress (referencing `self` inside a
+    @staticmethod) crashed the app on the first background NCEI progress
+    update after an analysis completed."""
+    from modules.m3_probability.engine import compute_annual_profile
+    from core.models import Platform, Site, Vehicle
+    from ui.widgets.analysis_charts import AnalysisChartsWidget
+
+    site = Site(lat=40.0, lon=-70.0, name="T")
+    veh = Vehicle(
+        name="V", vehicle_class="slv_orb", recovery_mode="expendable",
+        max_wind_kts=25, max_gust_kts=30, max_hs_m=1.93,
+        max_swell_ht_m=2.44, max_swell_period_s=12,
+    )
+    profile = compute_annual_profile(site, veh, Platform("Gateway X", "semisub", 0.78))
+    w = AnalysisChartsWidget()
+    w.set_profile(profile, operability=None, operability_progress=(0, 120))
+    w.update_operability_progress(1, 120)
+    w.update_operability_progress(120, 120)

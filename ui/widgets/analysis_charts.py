@@ -954,13 +954,6 @@ class AnalysisChartsWidget(_BaseChartCanvas):
         ax12.text(0.5, 0.5, wait_msg, color=_MUTED, ha="center", va="center",
                   fontsize=9, transform=ax12.transAxes)
 
-    @staticmethod
-    def _draw_fetch_progress(ax, done: int, total: int, title: str) -> None:
-        self._operability_progress = (done, total)
-        if self._profile:
-            self._render_operability_panels()
-            self.canvas.draw_idle()
-
     def update_operability_progress(self, done: int, total: int) -> None:
         self._operability_progress = (done, total)
         if self._profile:
