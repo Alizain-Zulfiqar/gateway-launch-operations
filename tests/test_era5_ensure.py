@@ -96,3 +96,38 @@ class TestEnsureEra5Cache:
         ok, err = mod.ensure_era5_cache(28.5, -80.5, 2024, 2024)
         assert ok is False
         assert err is not None
+
+    def test_partial_cache_continues_with_warning(self, isolated_db, monkeypatch):
+        """When some months exist after a failed top-up, analysis should continue."""
+        from modules.m2_weather import era5_ensure as mod
+
+        for mo in range(1, 7):
+            save_cached_era5_month(28.5, -80.5, f"2024-{mo:02d}-01", _full_month())
+
+        monkeypatch.setattr(
+            mod, "fetch_marine_climatology",
+            lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("CDS unavailable")),
+        )
+        ok, err = mod.ensure_era5_cache(
+            28.5, -80.5, 2024, 2024, allow_partial=True,
+        )
+        assert ok is True
+        assert err is not None
+        assert "6 of" in err
+        assert "continue" in err.lower()
+
+    def test_partial_disabled_still_fails(self, isolated_db, monkeypatch):
+        from modules.m2_weather import era5_ensure as mod
+
+        for mo in range(1, 7):
+            save_cached_era5_month(28.5, -80.5, f"2024-{mo:02d}-01", _full_month())
+
+        monkeypatch.setattr(
+            mod, "fetch_marine_climatology",
+            lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("CDS unavailable")),
+        )
+        ok, err = mod.ensure_era5_cache(
+            28.5, -80.5, 2024, 2024, allow_partial=False,
+        )
+        assert ok is False
+        assert err is not None

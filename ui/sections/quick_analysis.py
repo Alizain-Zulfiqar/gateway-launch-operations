@@ -444,11 +444,37 @@ class QuickAnalysisSection(QWidget):
         if site is None:
             return
 
+        try:
+            self._run_analysis(site)
+        except Exception as exc:
+            self._set_fetch_status(None)
+            QMessageBox.warning(
+                self,
+                "Quick Analysis Failed",
+                f"The analysis could not be completed:\n\n{exc}",
+            )
+            self.mw.status(f"Quick analysis failed: {exc}")
+
+    def _run_analysis(self, site) -> None:
         self._cancel_ncei_worker()
         self._last_site = site
 
-        vehicle = self.mw.vehicles[self.vehicle_combo.currentData()]
-        platform = self.mw.platforms[self.platform_combo.currentData()]
+        v_idx = self.vehicle_combo.currentData()
+        p_idx = self.platform_combo.currentData()
+        if v_idx is None or not self.mw.vehicles:
+            QMessageBox.warning(
+                self, "No Vehicle",
+                "Select a vehicle before running Quick Analysis.",
+            )
+            return
+        if p_idx is None or not self.mw.platforms:
+            QMessageBox.warning(
+                self, "No Platform",
+                "Select a platform before running Quick Analysis.",
+            )
+            return
+        vehicle = self.mw.vehicles[int(v_idx)]
+        platform = self.mw.platforms[int(p_idx)]
         wind_kts = float(vehicle.max_wind_kts)
         hs_m = float(vehicle.max_hs_m)
         self._last_operability_limits = (wind_kts, hs_m)
@@ -462,6 +488,12 @@ class QuickAnalysisSection(QWidget):
         mode = "45day" if self.rb_45day.isChecked() else "historical"
         year_start = self.year_start_spin.value()
         year_end = self.year_end_spin.value()
+        if year_end < year_start:
+            QMessageBox.warning(
+                self, "Year Range",
+                "Year end must be ≥ year start.",
+            )
+            return
         thresholds_override = self.threshold_editor.values()
         from modules.m2_weather.operability import criteria_params_from_weights
         criteria_params = criteria_params_from_weights(weights)
@@ -477,13 +509,18 @@ class QuickAnalysisSection(QWidget):
         try:
             try:
                 from modules.m2_weather.data_manager import get_site_weather_summary
+                # Live fetches run off the UI thread — on the GUI thread a slow
+                # or unreachable Copernicus/NCEI server froze the window
+                # ("Not Responding"), which users experienced as a crash.
                 if mode == "45day":
                     self._set_fetch_status("Fetching live 45-day weather data…")
-                    observed_means = get_site_weather_summary(site, mode="45day")
+                    observed_means = ac.run_off_ui_thread(
+                        get_site_weather_summary, site, mode="45day",
+                    )
                 else:
                     self._set_fetch_status("Fetching live NCEI/ERA5 historical data…")
-                    observed_means = get_site_weather_summary(
-                        site, mode="historical",
+                    observed_means = ac.run_off_ui_thread(
+                        get_site_weather_summary, site, mode="historical",
                         year_start=year_start, year_end=year_end,
                     )
             except Exception:
@@ -554,6 +591,14 @@ class QuickAnalysisSection(QWidget):
         finally:
             self._set_fetch_status(None)
 
+        if not self._profile:
+            QMessageBox.warning(
+                self,
+                "Quick Analysis Failed",
+                "No monthly results were produced. Check coordinates and try again.",
+            )
+            return
+
         try:
             from core.utils import ncei_bbox_str
             from modules.m2_weather.ncei_download import (
@@ -583,11 +628,18 @@ class QuickAnalysisSection(QWidget):
             " border-radius:6px; padding:12px 16px; }"
         )
         self.basis_panel.setText(ac.basis_html(self._profile[best]))
-        self.charts.set_profile(
-            self._profile,
-            operability=operability,
-            operability_progress=operability_progress,
-            **chart_kw,
-        )
-        self._start_ncei_fetch_if_needed(site)
+        try:
+            self.charts.set_profile(
+                self._profile,
+                operability=operability,
+                operability_progress=operability_progress,
+                **chart_kw,
+            )
+        except Exception as chart_exc:
+            # Keep the table/summary even if chart rendering fails.
+            self.mw.status(f"Charts failed to render: {chart_exc}")
+        try:
+            self._start_ncei_fetch_if_needed(site)
+        except Exception:
+            pass
         self.mw.status("Quick analysis complete (not saved).")

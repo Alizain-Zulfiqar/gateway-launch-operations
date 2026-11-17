@@ -10,8 +10,10 @@ from PyQt6.QtCore import QEventLoop, QThread, pyqtSignal
 from modules.m2_weather.era5 import fetch_marine_climatology
 from modules.m2_weather.era5_cache import (
     era5_cache_progress,
+    era5_last_available_month,
     era5_month_complete,
     get_cached_era5_month,
+    iter_era5_expected_months,
     save_cached_era5_month,
 )
 
@@ -29,15 +31,19 @@ _ERA5_PARSE_FAILED = (
 
 
 def _years_needing_fetch(lat: float, lon: float, year_start: int, year_end: int) -> list[int]:
-    """Return calendar years that still have incomplete cache months."""
-    needed = []
-    for yr in range(year_start, year_end + 1):
+    """Return calendar years that still have incomplete *expected* cache months."""
+    needed: list[int] = []
+    seen: set[int] = set()
+    for yr, mo in iter_era5_expected_months(year_start, year_end):
+        if yr in seen:
+            continue
         incomplete = False
-        for mo in range(1, 13):
-            row = get_cached_era5_month(lat, lon, f"{yr}-{mo:02d}-01")
+        for y2, m2 in iter_era5_expected_months(yr, yr):
+            row = get_cached_era5_month(lat, lon, f"{y2}-{m2:02d}-01")
             if not era5_month_complete(row):
                 incomplete = True
                 break
+        seen.add(yr)
         if incomplete:
             needed.append(yr)
     return needed
@@ -50,21 +56,35 @@ def ensure_era5_cache(
     year_end: int,
     *,
     on_progress: ProgressCallback | None = None,
+    allow_partial: bool = True,
 ) -> tuple[bool, str | None]:
     """
-    Ensure era5_monthly_cache is complete for lat/lon and year range.
+    Ensure era5_monthly_cache covers months ERA5 is expected to provide.
 
     Fetches one Copernicus job per incomplete calendar year (avoids huge
     multi-decade requests that blow up NetCDF merge and CDS queues).
 
-    Returns (ok, error_message).  on_progress(done, total, msg): done=-1 means
+    Months beyond the ERA5 availability lag (near-current / future planning
+    years) are not required. When *allow_partial* is True and at least some
+    expected months are cached after fetch attempts, returns
+    ``(True, warning_or_None)`` so analysis can continue instead of aborting.
+
+    Returns (ok, error_or_warning).  on_progress(done, total, msg): done=-1 means
     indeterminate (CDS queue wait).
     """
     cached, total = era5_cache_progress(lat, lon, year_start, year_end)
     if on_progress:
         on_progress(cached, total, f"{cached}/{total} months cached")
 
-    if cached >= total and total > 0:
+    if total == 0:
+        last_y, last_m = era5_last_available_month()
+        return False, (
+            f"No ERA5 months fall in {year_start}–{year_end} before the "
+            f"availability cutoff ({last_y}-{last_m:02d}). "
+            "Choose an earlier year range."
+        )
+
+    if cached >= total:
         return True, None
 
     years = _years_needing_fetch(lat, lon, year_start, year_end)
@@ -104,15 +124,35 @@ def ensure_era5_cache(
 
     cached, total = era5_cache_progress(lat, lon, year_start, year_end)
     if on_progress:
-        on_progress(cached, total, "ERA5 cache complete" if cached >= total else
-                    f"ERA5 cache incomplete ({cached}/{total})")
-
-    if cached < total:
-        return False, last_error or (
-            f"ERA5 cache incomplete after fetch ({cached}/{total} months). "
-            f"{_ERA5_PARSE_FAILED}"
+        on_progress(
+            cached,
+            total,
+            "ERA5 cache complete" if cached >= total else
+            f"ERA5 cache incomplete ({cached}/{total})",
         )
-    return True, None
+
+    if cached >= total:
+        return True, None
+
+    incomplete_msg = last_error or (
+        f"ERA5 cache incomplete after fetch ({cached}/{total} months). "
+        f"{_ERA5_PARSE_FAILED}"
+    )
+
+    # Partial success: enough to analyze — warn but do not abort the run.
+    if allow_partial and cached > 0:
+        last_y, last_m = era5_last_available_month()
+        warn = (
+            f"Only {cached} of {total} expected ERA5 months are available "
+            f"for {year_start}–{year_end} (Copernicus data typically lags; "
+            f"latest expected month ≈ {last_y}-{last_m:02d}). "
+            "Analysis will continue using the months that are available."
+        )
+        if last_error:
+            warn = f"{warn}\n\nLast fetch detail:\n{last_error}"
+        return True, warn
+
+    return False, incomplete_msg
 
 
 class _EnsureEra5Worker(QThread):
@@ -150,7 +190,7 @@ def ensure_era5_cache_blocking(
 ) -> tuple[bool, str | None]:
     """Run ensure_era5_cache on a worker thread; block until complete."""
     cached, total = era5_cache_progress(lat, lon, year_start, year_end)
-    if cached >= total and total > 0:
+    if total > 0 and cached >= total:
         if on_progress:
             on_progress(cached, total, f"{cached}/{total} months cached")
         return True, None
@@ -176,5 +216,5 @@ def ensure_era5_cache_blocking(
     worker.wait(5000)
 
     if result[0]:
-        return True, None
+        return True, (str(result[1]) or None)
     return False, str(result[1]) or _ERA5_FETCH_FAILED

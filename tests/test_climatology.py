@@ -12,8 +12,12 @@ from modules.m2_weather.climatology import (
     build_monthly_climatology,
     climatology_year_range,
 )
+from datetime import date
+
 from modules.m2_weather.era5_cache import (
     era5_cache_progress,
+    era5_last_available_month,
+    iter_era5_expected_months,
     save_cached_era5_month,
 )
 
@@ -45,9 +49,25 @@ class TestEra5Cache:
             "wg_mean_kts": 18.0,
             "record_count": 1,
         })
-        cached, total = era5_cache_progress(28.5, -80.5, 2024, 2024)
+        cached, total = era5_cache_progress(
+            28.5, -80.5, 2024, 2024, as_of=date(2026, 11, 1),
+        )
         assert cached == 1
         assert total == 12
+
+    def test_progress_excludes_months_beyond_availability_lag(self, isolated_db):
+        # As of Nov 2026, lag=2 → last available Sep 2026.
+        # 2025–2026 planning range must not demand Oct–Dec 2026.
+        cached, total = era5_cache_progress(
+            28.5, -80.5, 2025, 2026, as_of=date(2026, 11, 15),
+        )
+        assert cached == 0
+        assert total == 12 + 9  # 2025 full + Jan–Sep 2026
+        last_y, last_m = era5_last_available_month(date(2026, 11, 15))
+        assert (last_y, last_m) == (2026, 9)
+        months = list(iter_era5_expected_months(2025, 2026, as_of=date(2026, 11, 15)))
+        assert months[0] == (2025, 1)
+        assert months[-1] == (2026, 9)
 
 
 class TestBuildMonthlyClimatology:

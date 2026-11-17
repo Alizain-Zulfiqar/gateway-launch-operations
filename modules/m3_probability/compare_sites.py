@@ -69,6 +69,11 @@ def compare_site_era5(
         raise RuntimeError(
             err or f"ERA5 fetch failed for {label}."
         )
+    if err and on_progress:
+        on_progress(
+            -1, 0,
+            f"{label}: partial ERA5 coverage — continuing with available months",
+        )
 
     if on_progress:
         on_progress(-1, 0, f"{label}: analyzing 12-month profile…")

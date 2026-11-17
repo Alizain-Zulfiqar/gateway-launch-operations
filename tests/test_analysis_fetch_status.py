@@ -121,9 +121,12 @@ def test_run_clears_banner_even_when_engine_raises():
     ), patch(
         "modules.m3_probability.engine.compute_annual_profile",
         side_effect=RuntimeError("engine exploded"),
-    ):
-        with pytest.raises(RuntimeError):
-            tab._run()
+    ), patch("ui.analysis_tab.QMessageBox.warning") as warn:
+        # Errors are now reported in a dialog instead of propagating (an
+        # exception escaping a Qt slot terminates the app under PyQt6).
+        tab._run()
 
+    warn.assert_called_once()
+    assert "engine exploded" in warn.call_args.args[2]
     assert tab.fetch_status_widget.isVisible() is False
     assert tab.run_btn.isEnabled() is True

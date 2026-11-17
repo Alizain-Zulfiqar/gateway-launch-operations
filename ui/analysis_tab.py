@@ -620,7 +620,10 @@ class AnalysisTab(QWidget):
                 self._set_fetch_status("Fetching live 45-day weather data…", indeterminate=True)
                 try:
                     from modules.m2_weather.data_manager import get_site_weather_summary
-                    observed_means = get_site_weather_summary(self.mw.site, mode="45day")
+                    from ui.analysis_common import run_off_ui_thread
+                    observed_means = run_off_ui_thread(
+                        get_site_weather_summary, self.mw.site, mode="45day",
+                    )
                 except Exception:
                     observed_means = None
             else:
@@ -664,6 +667,14 @@ class AnalysisTab(QWidget):
                         err or "Copernicus ERA5 data could not be retrieved.",
                     )
                     return
+                # Partial coverage (e.g. current-year months not yet published
+                # by Copernicus) — warn and continue with available months.
+                if err:
+                    QMessageBox.information(
+                        self,
+                        "Partial ERA5 Data",
+                        err,
+                    )
 
                 self._set_fetch_status(
                     "Analyzing 12-month profile (charts 1–10)…",
@@ -844,6 +855,14 @@ class AnalysisTab(QWidget):
             self.update_basis_panel(self._profile[best_month])
             self._update_vessel_row(self._profile[best_month])
             self.pdf_btn.setEnabled(True)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Analysis Failed",
+                f"The analysis could not be completed:\n\n{exc}",
+            )
+            self.mw.status(f"Analysis failed: {exc}")
+            return
         finally:
             self._set_fetch_status(None)
 

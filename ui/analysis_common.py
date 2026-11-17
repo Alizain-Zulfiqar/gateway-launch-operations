@@ -12,9 +12,48 @@ hold no state of their own.
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from typing import Any, Callable
+
+from PyQt6.QtCore import QEventLoop, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import QTableWidgetItem
 from PyQt6.QtGui import QColor
+
+
+class _CallWorker(QThread):
+    done = pyqtSignal()
+
+    def __init__(self, fn: Callable[..., Any], args: tuple, kwargs: dict):
+        super().__init__()
+        self._fn, self._args, self._kwargs = fn, args, kwargs
+        self.result: Any = None
+        self.error: BaseException | None = None
+
+    def run(self) -> None:
+        try:
+            self.result = self._fn(*self._args, **self._kwargs)
+        except BaseException as exc:  # re-raised on the caller's thread
+            self.error = exc
+        self.done.emit()
+
+
+def run_off_ui_thread(fn: Callable[..., Any], *args, **kwargs) -> Any:
+    """Run a slow (network) call on a worker thread, keeping the UI responsive.
+
+    Blocks the caller like a normal function call, but spins a local event
+    loop so the window keeps repainting instead of going "Not Responding"
+    during multi-minute NCEI / ERA5 / WW3 fetches. Exceptions raised by *fn*
+    are re-raised here.
+    """
+    loop = QEventLoop()
+    worker = _CallWorker(fn, args, kwargs)
+    worker.done.connect(loop.quit)
+    worker.start()
+    if not worker.isFinished():
+        loop.exec()
+    worker.wait()
+    if worker.error is not None:
+        raise worker.error
+    return worker.result
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]

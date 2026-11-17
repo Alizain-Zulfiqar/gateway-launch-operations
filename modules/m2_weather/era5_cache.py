@@ -3,7 +3,8 @@ modules/m2_weather/era5_cache.py — Local cache for ERA5 monthly marine climato
 """
 from __future__ import annotations
 
-from typing import Optional
+from datetime import date
+from typing import Iterator, Optional, Tuple
 
 _CACHE_COLUMNS = [
     "ws_mean_kts",
@@ -15,6 +16,36 @@ _CACHE_COLUMNS = [
 ]
 
 _REQUIRED_FIELDS = ("ws_mean_kts", "sh_mean_m", "swh_mean_m", "wg_mean_kts")
+
+# Copernicus ERA5 monthly-means products typically lag the calendar by a few
+# months. Requiring Dec of the current planning year (year_max = today+1)
+# makes ensure_era5_cache report incomplete (e.g. 18/24) and abort analysis.
+_ERA5_AVAILABILITY_LAG_MONTHS = 2
+
+
+def era5_last_available_month(as_of: date | None = None) -> Tuple[int, int]:
+    """Latest (year, month) we expect ERA5 monthly-means to cover."""
+    d = as_of or date.today()
+    y, m = d.year, d.month - _ERA5_AVAILABILITY_LAG_MONTHS
+    while m <= 0:
+        m += 12
+        y -= 1
+    return y, m
+
+
+def iter_era5_expected_months(
+    year_start: int,
+    year_end: int,
+    *,
+    as_of: date | None = None,
+) -> Iterator[Tuple[int, int]]:
+    """Yield (year, month) pairs in range that ERA5 is expected to provide."""
+    last_y, last_m = era5_last_available_month(as_of)
+    for yr in range(year_start, year_end + 1):
+        for mo in range(1, 13):
+            if (yr, mo) > (last_y, last_m):
+                return
+            yield yr, mo
 
 
 def era5_month_complete(summary: dict | None) -> bool:
@@ -81,17 +112,30 @@ def save_cached_era5_month(lat: float, lon: float, month_start: str, summary: di
         conn.close()
 
 
-def era5_cache_progress(lat: float, lon: float, year_start: int, year_end: int) -> tuple[int, int]:
-    total = (year_end - year_start + 1) * 12
+def era5_cache_progress(
+    lat: float,
+    lon: float,
+    year_start: int,
+    year_end: int,
+    *,
+    as_of: date | None = None,
+) -> tuple[int, int]:
+    """Return (cached_complete, expected_total) for months ERA5 should have.
+
+    Future / not-yet-published months (beyond the ERA5 availability lag) are
+    excluded from *total* so a 2025–2026 planning range does not demand
+    months Copernicus has not released yet.
+    """
+    expected = list(iter_era5_expected_months(year_start, year_end, as_of=as_of))
+    total = len(expected)
     cached = 0
-    for yr in range(year_start, year_end + 1):
-        for mo in range(1, 13):
-            row = get_cached_era5_month(lat, lon, f"{yr}-{mo:02d}-01")
-            if era5_month_complete(row):
-                cached += 1
+    for yr, mo in expected:
+        row = get_cached_era5_month(lat, lon, f"{yr}-{mo:02d}-01")
+        if era5_month_complete(row):
+            cached += 1
     return cached, total
 
 
 def era5_fetch_incomplete(lat: float, lon: float, year_start: int, year_end: int) -> bool:
     cached, total = era5_cache_progress(lat, lon, year_start, year_end)
-    return cached < total
+    return total > 0 and cached < total

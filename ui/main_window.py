@@ -468,8 +468,35 @@ class GatewayMainWindow(QMainWindow):
 
 # ── App entry point ───────────────────────────────────────────────────────────
 
+def _install_exception_dialog() -> None:
+    """Show unexpected errors in a dialog instead of letting PyQt6 abort.
+
+    With the default hook, an exception escaping any Qt slot makes PyQt6
+    terminate the whole process — the "error terminated the program"
+    behaviour the client reported. This keeps the app alive and visible.
+    """
+    import traceback
+    from PyQt6.QtWidgets import QMessageBox
+
+    def _hook(exc_type, exc, tb):
+        traceback.print_exception(exc_type, exc, tb)
+        if issubclass(exc_type, KeyboardInterrupt):
+            return
+        try:
+            box = QMessageBox(QMessageBox.Icon.Warning, "Unexpected Error",
+                              f"Something went wrong, but the app is still running.\n\n"
+                              f"{exc_type.__name__}: {exc}")
+            box.setDetailedText("".join(traceback.format_exception(exc_type, exc, tb)))
+            box.exec()
+        except Exception:
+            pass
+
+    sys.excepthook = _hook
+
+
 def launch_ui() -> None:
     app = QApplication(sys.argv)
+    _install_exception_dialog()
     app.setApplicationName("Gateway Launch Operations")
     app.setFont(QFont("Segoe UI", 9))
     win = GatewayMainWindow()

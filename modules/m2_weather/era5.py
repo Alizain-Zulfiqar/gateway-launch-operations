@@ -178,15 +178,91 @@ def _get_cds_client(**kwargs):
     ecmwf-datastores-client somehow isn't installed (it's already a
     dependency of cdsapi itself, so this should be rare).
     """
+    # Bounded retries: the library defaults (retry_max=500, sleep_max=120s)
+    # retry an unreachable Copernicus server for many hours, which froze the
+    # app (client-reported "Quick Analysis crash"). These limits only govern
+    # failed HTTP requests — normal CDS queue polling is unaffected.
+    _require_cds_reachable()
+    limits = dict(
+        timeout=_CDS_TIMEOUT_S,
+        retry_max=_CDS_RETRY_MAX,
+        sleep_max=_CDS_SLEEP_MAX_S,
+    )
     try:
         from ecmwf.datastores.legacy_client import LegacyClient
-        return LegacyClient(quiet=True, progress=False)
+        return LegacyClient(quiet=True, progress=False, **limits)
     except ImportError:
         import cdsapi
         try:
-            return cdsapi.Client(quiet=True, progress=False, wait_until_complete=True)
+            return cdsapi.Client(
+                quiet=True, progress=False, wait_until_complete=True, **limits,
+            )
         except TypeError:
             return cdsapi.Client(quiet=True, progress=False)
+
+
+_CDS_TIMEOUT_S = 60
+_CDS_RETRY_MAX = 5
+_CDS_SLEEP_MAX_S = 20
+_CDS_PROBE_TIMEOUT_S = 8
+_CDS_PROBE_TTL_S = 120
+_cds_probe_cache: dict[str, tuple[float, bool]] = {}
+
+
+def _cds_api_url() -> str:
+    """CDS API URL from CDSAPI_URL, else the active .cdsapirc, else default."""
+    url = os.environ.get("CDSAPI_URL")
+    if url:
+        return url
+    rc = os.environ.get("CDSAPI_RC") or os.path.expanduser("~/.cdsapirc")
+    try:
+        with open(rc, encoding="utf-8") as fh:
+            for line in fh:
+                key, _, val = line.partition(":")
+                if key.strip() == "url" and val.strip():
+                    return val.strip()
+    except OSError:
+        pass
+    return "https://cds.climate.copernicus.eu/api"
+
+
+def cds_reachable() -> bool:
+    """Quick TCP probe of the Copernicus CDS host (cached for a short while).
+
+    Lets ERA5 fetches fail in seconds when the server or network is down,
+    instead of sitting in the client's retry loop for minutes.
+    """
+    import socket
+    import time
+    from urllib.parse import urlparse
+
+    parsed = urlparse(_cds_api_url())
+    host = parsed.hostname or "cds.climate.copernicus.eu"
+    port = parsed.port or (443 if parsed.scheme != "http" else 80)
+    now = time.monotonic()
+    hit = _cds_probe_cache.get(host)
+    if hit and now - hit[0] < _CDS_PROBE_TTL_S:
+        return hit[1]
+    try:
+        with socket.create_connection((host, port), timeout=_CDS_PROBE_TIMEOUT_S):
+            ok = True
+    except OSError:
+        ok = False
+    _cds_probe_cache[host] = (now, ok)
+    return ok
+
+
+class CdsUnreachableError(ConnectionError):
+    pass
+
+
+def _require_cds_reachable() -> None:
+    if not cds_reachable():
+        raise CdsUnreachableError(
+            "Copernicus CDS server could not be reached "
+            f"({_cds_api_url()}). Check the internet connection or try "
+            "again later — Copernicus may be down for maintenance."
+        )
 
 
 _AUX_COORDS = ("expver", "number")
